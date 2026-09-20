@@ -202,7 +202,7 @@ impl Snapshot {
 ///   - Braille spinner ⠀-⣿ (U+2800-U+28FF) (older Claude Code)
 ///   - Circular spinner ◐◓◑◒ (U+25D0-U+25D3) (current Claude Code)
 ///
-
+///
 /// Copilot CLI doesn't put a spinner in the title; it draws a status line
 /// on the last row of the screen instead. Reading that would require
 /// calling `wezterm cli get-text` per pane, which violates the

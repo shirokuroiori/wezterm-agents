@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+# No workflow-level `permissions` block: this leaves every job at the
+# repository/organization default (typically read-only for GITHUB_TOKEN).
+# Only the `release` job below needs write access, and declares it itself.
+
+jobs:
+  # Only runs for an actual tag push. Guards against a tag/Cargo.toml version
+  # mismatch before any binaries are built. Skipped (not failed) on a manual
+  # workflow_dispatch run, since there's no tag to check yet.
+  check-version:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          set -e
+          tag_version="${GITHUB_REF#refs/tags/v}"
+          cargo_version="$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"(.*)"/\1/')"
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "Tag v$tag_version does not match Cargo.toml version $cargo_version" >&2
+            exit 1
+          fi
+
+  # Re-runs the same test/lint gate as ci.yml against the exact tagged
+  # commit, so a tag pushed without going through a PR (or an admin bypass)
+  # can't skip straight to a published release.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets --locked
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+  build:
+    needs: [check-version, test]
+    # Runs when check-version passed (tag push) or was skipped (workflow_dispatch), and test passed.
+    if: always() && (needs.check-version.result == 'success' || needs.check-version.result == 'skipped') && needs.test.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install cross-compilation linker (Linux arm64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Configure cross-compilation linker (Linux arm64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Stage binary under its target-triple name
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/wezterm-agents" "dist/wezterm-agents-${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wezterm-agents-${{ matrix.target }}
+          path: dist/wezterm-agents-${{ matrix.target }}
+          if-no-files-found: error
+
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    # The only job that needs to write to the repo (creating the GitHub
+    # Release). Scoped here instead of at the workflow level so check-version,
+    # test, and the 4-way build matrix all run with a read-only token.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum wezterm-agents-* > SHASUMS256.txt
+          cat SHASUMS256.txt
+      - name: Upload combined artifacts (workflow_dispatch dry run)
+        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run
+          path: dist
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/wezterm-agents-*
+            dist/SHASUMS256.txt

@@ -324,6 +324,9 @@ fn print_once() {
         // one and forgetting the other, throwing the columns out of
         // alignment — so it's all funneled through a single row(), called
         // from both the header and the body.
+        // One column per positional arg; a struct would just move the same
+        // 8 fields without reducing them, so the warning is allowed here.
+        #[allow(clippy::too_many_arguments)]
         fn row(icon: &str, unread: &str, ws: &str, win: &str, tab: &str, pane: &str, agent: &str, branch: &str) -> String {
             format!(
                 "  {icon} {} {} {} {} {} {} {branch}",

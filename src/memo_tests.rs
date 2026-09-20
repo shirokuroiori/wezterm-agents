@@ -1,9 +1,9 @@
 use super::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Each test uses its own private temp directory. Combines std::env::temp_dir()
-/// + process ID + a per-test counter into a name that won't collide even
-/// under parallel execution.
+/// Each test uses its own private temp directory: std::env::temp_dir()
+/// combined with the process ID and a per-test counter, producing a name
+/// that won't collide even under parallel execution.
 fn tmp_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     let dir = std::env::temp_dir().join(format!(
