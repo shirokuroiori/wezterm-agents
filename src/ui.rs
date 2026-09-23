@@ -8,6 +8,7 @@ use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, LayoutMode, Row};
+use crate::lang::Lang;
 use crate::memo;
 use crate::model::*;
 
@@ -114,10 +115,11 @@ fn draw_list(f: &mut Frame, area: Rect, app: &App, task_view: bool) {
     f.render_widget(block, area);
 
     if app.rows.is_empty() {
-        let msg = if app.snapshot.is_empty() {
-            "対象のペインがありません"
-        } else {
-            "絞り込みに一致するペインがありません"
+        let msg = match (app.snapshot.is_empty(), app.lang) {
+            (true, Lang::En) => "No agent panes",
+            (true, Lang::Ja) => "対象のペインがありません",
+            (false, Lang::En) => "No panes match the filter",
+            (false, Lang::Ja) => "絞り込みに一致するペインがありません",
         };
         f.render_widget(Paragraph::new(msg).style(Style::default().fg(COLOR_DIM)), inner);
         return;
@@ -323,8 +325,12 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, area);
 
     let Some(p) = app.selected_pane() else {
+        let msg = match app.lang {
+            Lang::En => "No pane selected",
+            Lang::Ja => "選択中のペインがありません",
+        };
         f.render_widget(
-            Paragraph::new("選択中のペインがありません").style(Style::default().fg(COLOR_DIM)),
+            Paragraph::new(msg).style(Style::default().fg(COLOR_DIM)),
             inner,
         );
         return;
@@ -351,7 +357,7 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("  {}", p.state.label()),
+                format!("  {}", p.state.label(app.lang)),
                 Style::default().fg(COLOR_DIM),
             ),
         ]),
@@ -366,7 +372,13 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
         ]),
         Line::from(vec![label("task"), Span::raw(p.task.clone())]),
         Line::from(""),
-        section("位置", inner.width),
+        section(
+            match app.lang {
+                Lang::En => "Location",
+                Lang::Ja => "位置",
+            },
+            inner.width,
+        ),
         // workspace/window/tab/pane are a different granularity from the other
         // fields (four values that together describe "where this pane is"), so
         // they get their own section, each printed with the same label()
@@ -376,12 +388,22 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![label("tab"), Span::raw(p.tab_id.to_string())]),
         Line::from(vec![label("pane"), Span::raw(p.pane_id.to_string())]),
         Line::from(""),
-        section("通知", inner.width),
+        section(
+            match app.lang {
+                Lang::En => "Notifications",
+                Lang::Ja => "通知",
+            },
+            inner.width,
+        ),
     ];
 
     if p.notifications.is_empty() {
+        let msg = match app.lang {
+            Lang::En => "  (none yet)",
+            Lang::Ja => "  （まだありません）",
+        };
         lines.push(Line::from(Span::styled(
-            "  （まだありません）",
+            msg,
             Style::default().fg(COLOR_DIM),
         )));
     } else {
@@ -411,7 +433,13 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
     }
 
     lines.push(Line::from(""));
-    lines.push(section("メモ", inner.width));
+    lines.push(section(
+        match app.lang {
+            Lang::En => "Notes",
+            Lang::Ja => "メモ",
+        },
+        inner.width,
+    ));
     // Show only the "# メモ" (memo) section — the human's free-edit area. "## ログ"
     // (log) is where the hook writes and isn't shown here (see the role split in
     // spec §5.1). File I/O happens here, but draw() is called at most once per
@@ -426,15 +454,24 @@ fn draw_detail(f: &mut Frame, area: Rect, app: &App) {
                 lines.push(Line::from(Span::raw(format!("  {line}"))));
             }
             if body_lines.len() > MAX_LINES {
+                let rest = body_lines.len() - MAX_LINES;
+                let msg = match app.lang {
+                    Lang::En => format!("  … {rest} more lines (press `e` to edit the full text)"),
+                    Lang::Ja => format!("  … 他 {rest} 行（`e` で全文編集）"),
+                };
                 lines.push(Line::from(Span::styled(
-                    format!("  … 他 {} 行（`e` で全文編集）", body_lines.len() - MAX_LINES),
+                    msg,
                     Style::default().fg(COLOR_DIM),
                 )));
             }
         }
         None => {
+            let msg = match app.lang {
+                Lang::En => "  (no notes yet. press `e` to edit)",
+                Lang::Ja => "  （まだメモはありません。`e` で編集）",
+            };
             lines.push(Line::from(Span::styled(
-                "  （まだメモはありません。`e` で編集）",
+                msg,
                 Style::default().fg(COLOR_DIM),
             )));
         }
@@ -478,17 +515,30 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     // scheme as the STATUS badge (p.state.badge()) for visual consistency. Tab
     // cycles the layout (Split / full-width list / full-width detail). Always
     // shown, since on a narrow terminal it also works as a list⇄detail toggle.
-    let hints: [(&str, &str); 9] = [
-        ("↑/↓", "移動"),
-        ("⏎", "ジャンプ"),
-        ("Tab", "表示"),
-        ("e", "メモ"),
-        ("r", "既読"),
-        ("R", "全既読"),
-        ("/", "絞込"),
-        ("g", "更新"),
-        ("q", "終了"),
-    ];
+    let hints: [(&str, &str); 9] = match app.lang {
+        Lang::En => [
+            ("↑/↓", "move"),
+            ("⏎", "jump"),
+            ("Tab", "view"),
+            ("e", "notes"),
+            ("r", "read"),
+            ("R", "read all"),
+            ("/", "filter"),
+            ("g", "refresh"),
+            ("q", "quit"),
+        ],
+        Lang::Ja => [
+            ("↑/↓", "移動"),
+            ("⏎", "ジャンプ"),
+            ("Tab", "表示"),
+            ("e", "メモ"),
+            ("r", "既読"),
+            ("R", "全既読"),
+            ("/", "絞込"),
+            ("g", "更新"),
+            ("q", "終了"),
+        ],
+    };
 
     let mut spans = vec![Span::raw(" ")];
     for (i, (key, label)) in hints.iter().enumerate() {

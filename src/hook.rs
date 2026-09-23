@@ -45,6 +45,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
+use crate::lang::Lang;
 use crate::memo;
 use crate::model::task_from_title;
 use crate::paths;
@@ -101,11 +102,13 @@ impl Event {
     }
 
     /// `.jsonl`'s `text` (a fixed message per state).
-    fn text(self) -> &'static str {
-        match self {
-            Event::Waiting => "承認/入力待ちです",
-            Event::Done => "応答が完了しました",
-            _ => "",
+    fn text(self, lang: Lang) -> &'static str {
+        match (self, lang) {
+            (Event::Waiting, Lang::En) => "Waiting for approval/input",
+            (Event::Waiting, Lang::Ja) => "承認/入力待ちです",
+            (Event::Done, Lang::En) => "Response finished",
+            (Event::Done, Lang::Ja) => "応答が完了しました",
+            (_, _) => "",
         }
     }
 }
@@ -120,6 +123,7 @@ pub fn run(agent: &str, event: Event) -> Result<(), String> {
 
     let payload = read_payload();
     let dir = paths::ensure_status_dir()?;
+    let lang = Lang::from_env();
 
     match event {
         // Working is a lightweight event that only needs to record "a
@@ -130,8 +134,8 @@ pub fn run(agent: &str, event: Event) -> Result<(), String> {
             paths::write_private(&path, &now_rfc3339())
                 .map_err(|e| format!(".working の書き込みに失敗: {e}"))
         }
-        Event::Pretool => on_pretool(agent, dir, pane_id, &payload),
-        Event::Waiting | Event::Done => notify(agent, dir, pane_id, &payload, event),
+        Event::Pretool => on_pretool(agent, dir, pane_id, &payload, lang),
+        Event::Waiting | Event::Done => notify(agent, dir, pane_id, &payload, event, lang),
     }
 }
 
@@ -167,11 +171,11 @@ fn state_path(dir: &Path, pane_id: u64, ext: &str) -> PathBuf {
 /// AskUserQuestion is displayed, the transcript's tail still ended with the
 /// previous user utterance). So on every PreToolUse we stash a summary of
 /// the tool about to be used in `.pending`, and the waiting side reads that.
-fn on_pretool(agent: &str, dir: &Path, pane_id: u64, payload: &Value) -> Result<(), String> {
+fn on_pretool(agent: &str, dir: &Path, pane_id: u64, payload: &Value, lang: Lang) -> Result<(), String> {
     let Some((name, input)) = tool_from_payload(payload) else {
         return Ok(());
     };
-    let summary = tool_summary(&name, input);
+    let summary = tool_summary(&name, input, lang);
 
     // [Change from the old version] `.pending` now only stores the summary.
     //
@@ -192,7 +196,7 @@ fn on_pretool(agent: &str, dir: &Path, pane_id: u64, payload: &Value) -> Result<
     // Notification hook even for AskUserQuestion, so routing it here too
     // would double it up. This is the only place the two agents differ.
     if agent == "copilot" && name == "ask_user" {
-        return notify(agent, dir, pane_id, payload, Event::Waiting);
+        return notify(agent, dir, pane_id, payload, Event::Waiting, lang);
     }
     Ok(())
 }
@@ -220,7 +224,7 @@ fn tool_from_payload(payload: &Value) -> Option<(String, &Value)> {
 ///
 /// Returns an empty string when nothing matches (the caller then falls
 /// through to the next candidate).
-fn tool_summary(name: &str, input: &Value) -> String {
+fn tool_summary(name: &str, input: &Value, lang: Lang) -> String {
     let s = match name {
         "AskUserQuestion" => input
             .get("questions")
@@ -233,7 +237,10 @@ fn tool_summary(name: &str, input: &Value) -> String {
             })
             .unwrap_or_default(),
         "ExitPlanMode" => match str_field(input, &["plan"]) {
-            Some(plan) => format!("プラン承認待ち: {}", first_line(plan)),
+            Some(plan) => match lang {
+                Lang::En => format!("Plan approval pending: {}", first_line(plan)),
+                Lang::Ja => format!("プラン承認待ち: {}", first_line(plan)),
+            },
             None => String::new(),
         },
         "Bash" | "bash" => match str_field(input, &["command"]) {
@@ -255,7 +262,10 @@ fn tool_summary(name: &str, input: &Value) -> String {
         _ => String::new(),
     };
     let s = if s.is_empty() {
-        format!("{name} の許可待ち")
+        match lang {
+            Lang::En => format!("{name}: awaiting approval"),
+            Lang::Ja => format!("{name} の許可待ち"),
+        }
     } else {
         s
     };
@@ -278,6 +288,7 @@ fn notify(
     pane_id: u64,
     payload: &Value,
     event: Event,
+    lang: Lang,
 ) -> Result<(), String> {
     // Fetch tty_name, pane title, tab_id, and cwd together in a single
     // `wezterm cli` call. Do nothing if the pane can't be found (e.g. it
@@ -289,10 +300,10 @@ fn notify(
         return Ok(());
     };
 
-    let summary = summarize(dir, pane_id, payload, event, &info.title);
+    let summary = summarize(dir, pane_id, payload, event, &info.title, lang);
 
     emit_osc(tty, agent, event);
-    append_event(dir, pane_id, agent, event, &summary);
+    append_event(dir, pane_id, agent, event, &summary, lang);
     if event == Event::Done {
         append_memo_log(info.tab_id, &info.cwd, agent, &summary);
     }
@@ -322,6 +333,7 @@ fn summarize(
     payload: &Value,
     event: Event,
     pane_title: &str,
+    lang: Lang,
 ) -> String {
     if event == Event::Waiting {
         if let Some(s) = pending_summary(dir, pane_id) {
@@ -340,7 +352,7 @@ fn summarize(
         let extract = extract_from_transcript(&path);
         if event == Event::Waiting {
             if let Some((name, input)) = &extract.tool {
-                let s = tool_summary(name, input);
+                let s = tool_summary(name, input, lang);
                 if !s.is_empty() {
                     return s;
                 }
@@ -511,8 +523,8 @@ fn emit_osc(tty: &str, agent: &str, event: Event) {
 
 /// The append-only notification log (spec §2.2). The TUI's unread count
 /// and history read from this.
-fn append_event(dir: &Path, pane_id: u64, agent: &str, event: Event, summary: &str) {
-    let text = event.text();
+fn append_event(dir: &Path, pane_id: u64, agent: &str, event: Event, summary: &str, lang: Lang) {
+    let text = event.text(lang);
     if text.is_empty() {
         return;
     }

@@ -30,6 +30,7 @@ fn app_with_origin(origin_pane: Option<u64>) -> App {
         exit_on_jump: false,
         pending_exit: None,
         pending_edit: None,
+        lang: crate::lang::Lang::En,
         store: Store::new(),
         self_pane: None,
         origin_pane,

@@ -15,6 +15,7 @@
 
 mod app;
 mod hook;
+mod lang;
 mod memo;
 mod model;
 mod paths;
@@ -368,7 +369,13 @@ fn print_once() {
         }
     }
     if app.snapshot.is_empty() {
-        println!("対象のペインがありません");
+        println!(
+            "{}",
+            match app.lang {
+                lang::Lang::En => "No agent panes",
+                lang::Lang::Ja => "対象のペインがありません",
+            }
+        );
     }
 }
 

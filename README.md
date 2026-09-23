@@ -91,8 +91,9 @@ agents.apply_to_config(config, {
 ```
 
 See the doc comment at the top of `plugin/init.lua` for the full option list
-(`icons`, `colors`, `bin`, `debug`, `shell_integration`, `plugin_dir`) and
-the composable-API example.
+(`icons`, `colors`, `bin`, `debug`, `shell_integration`, `plugin_dir`, `lang`)
+and the composable-API example. The dashboard's display language defaults to
+English; pass `lang = 'ja'` for Japanese.
 
 ### Claude Code
 

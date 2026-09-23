@@ -8,6 +8,8 @@
 
 use ratatui::style::Color;
 
+use crate::lang::Lang;
+
 /// Matches the voltwave color scheme (.config/wezterm/colors/voltwave.toml).
 pub const COLOR_WAITING: Color = Color::Rgb(0xFE, 0x44, 0x50);
 pub const COLOR_DONE: Color = Color::Rgb(0x50, 0xfa, 0x7b);
@@ -90,12 +92,16 @@ impl State {
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            State::Working => "応答生成中",
-            State::Waiting => "承認/入力待ち",
-            State::Done => "応答完了",
-            State::Idle => "待機中",
+    pub fn label(self, lang: Lang) -> &'static str {
+        match (self, lang) {
+            (State::Working, Lang::En) => "Working",
+            (State::Working, Lang::Ja) => "応答生成中",
+            (State::Waiting, Lang::En) => "Waiting for input",
+            (State::Waiting, Lang::Ja) => "承認/入力待ち",
+            (State::Done, Lang::En) => "Done",
+            (State::Done, Lang::Ja) => "応答完了",
+            (State::Idle, Lang::En) => "Idle",
+            (State::Idle, Lang::Ja) => "待機中",
         }
     }
 
