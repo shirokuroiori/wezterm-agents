@@ -121,9 +121,9 @@ pub fn run(agent: &str, event: Event) -> Result<(), String> {
         return Ok(());
     };
 
+    let lang = Lang::from_env();
     let payload = read_payload();
     let dir = paths::ensure_status_dir()?;
-    let lang = Lang::from_env();
 
     match event {
         // Working is a lightweight event that only needs to record "a
@@ -131,8 +131,10 @@ pub fn run(agent: &str, event: Event) -> Result<(), String> {
         // and just update the timestamp.
         Event::Working => {
             let path = state_path(dir, pane_id, "working");
-            paths::write_private(&path, &now_rfc3339())
-                .map_err(|e| format!(".working の書き込みに失敗: {e}"))
+            paths::write_private(&path, &now_rfc3339()).map_err(|e| match lang {
+                Lang::En => format!("Failed to write .working: {e}"),
+                Lang::Ja => format!(".working の書き込みに失敗: {e}"),
+            })
         }
         Event::Pretool => on_pretool(agent, dir, pane_id, &payload, lang),
         Event::Waiting | Event::Done => notify(agent, dir, pane_id, &payload, event, lang),
@@ -186,8 +188,10 @@ fn on_pretool(agent: &str, dir: &Path, pane_id: u64, payload: &Value, lang: Lang
     // summary built here, the raw input is never stored in the first place.
     let doc = json!({ "name": name, "summary": summary, "at": epoch_secs() });
     let path = state_path(dir, pane_id, "pending");
-    paths::replace_atomically(&path, &doc.to_string())
-        .map_err(|e| format!(".pending の書き込みに失敗: {e}"))?;
+    paths::replace_atomically(&path, &doc.to_string()).map_err(|e| match lang {
+        Lang::En => format!("Failed to write .pending: {e}"),
+        Lang::Ja => format!(".pending の書き込みに失敗: {e}"),
+    })?;
 
     // Copilot CLI has no dedicated event for "awaiting permission" — the
     // ask_user tool call itself means it's waiting for input, so route it

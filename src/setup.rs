@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
+use crate::lang::Lang;
+
 /// The "wezterm-agents binary path" embedded into config files.
 ///
 /// `~/.local/bin/wezterm-agents` is treated as the canonical location (same
@@ -40,14 +42,20 @@ use serde_json::{json, Value};
 /// path we were launched with (without following symlinks — a safety net
 /// for launches via a relative path or `./wezterm-agents`).
 pub fn current_bin() -> Result<String, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("自身のパスを取得できません: {e}"))?;
+    let lang = Lang::from_env();
+    let exe = std::env::current_exe().map_err(|e| match lang {
+        Lang::En => format!("Couldn't get our own path: {e}"),
+        Lang::Ja => format!("自身のパスを取得できません: {e}"),
+    })?;
     if let Some(canonical) = canonical_install_path() {
         if same_file(&canonical, &exe) {
             return Ok(canonical.to_string_lossy().into_owned());
         }
     }
-    let abs = std::path::absolute(&exe)
-        .map_err(|e| format!("パスの絶対化に失敗しました ({}): {e}", exe.display()))?;
+    let abs = std::path::absolute(&exe).map_err(|e| match lang {
+        Lang::En => format!("Failed to make the path absolute ({}): {e}", exe.display()),
+        Lang::Ja => format!("パスの絶対化に失敗しました ({}): {e}", exe.display()),
+    })?;
     Ok(abs.to_string_lossy().into_owned())
 }
 
@@ -108,9 +116,12 @@ pub fn shell_init(shell: &str, bin: &str) -> Result<String, String> {
         "fish" => Ok(format!(
             "function claude\n  command claude --settings '{json_str}' $argv\nend\n"
         )),
-        other => Err(format!(
-            "未対応のシェルです: {other}（zsh, bash, fish のいずれかを指定してください）"
-        )),
+        other => Err(match Lang::from_env() {
+            Lang::En => format!("Unsupported shell: {other} (specify one of zsh, bash, fish)"),
+            Lang::Ja => format!(
+                "未対応のシェルです: {other}（zsh, bash, fish のいずれかを指定してください）"
+            ),
+        }),
     }
 }
 
@@ -119,8 +130,15 @@ pub fn shell_init(shell: &str, bin: &str) -> Result<String, String> {
 /// not meant to be hand-edited alongside other settings, so re-running the
 /// command can just bring it fully up to date).
 pub fn install_copilot(bin: &str) -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME が未設定です".to_string())?;
+    let home = std::env::var("HOME").map_err(|_| home_unset_error())?;
     install_copilot_in(bin, &PathBuf::from(home).join(".copilot/hooks"))
+}
+
+fn home_unset_error() -> String {
+    match Lang::from_env() {
+        Lang::En => "HOME is not set".to_string(),
+        Lang::Ja => "HOME が未設定です".to_string(),
+    }
 }
 
 /// The body of `install_copilot`, taking the destination directory
@@ -153,12 +171,17 @@ fn install_copilot_in(bin: &str, dir: &Path) -> Result<PathBuf, String> {
         }
     });
 
-    std::fs::create_dir_all(dir)
-        .map_err(|e| format!("ディレクトリを作成できません ({}): {e}", dir.display()))?;
+    let lang = Lang::from_env();
+    std::fs::create_dir_all(dir).map_err(|e| match lang {
+        Lang::En => format!("Couldn't create directory ({}): {e}", dir.display()),
+        Lang::Ja => format!("ディレクトリを作成できません ({}): {e}", dir.display()),
+    })?;
     let path = dir.join("wezterm-agents.json");
     let body = serde_json::to_string_pretty(&doc).expect("static shape, always serializable");
-    std::fs::write(&path, body + "\n")
-        .map_err(|e| format!("書き込みに失敗しました ({}): {e}", path.display()))?;
+    std::fs::write(&path, body + "\n").map_err(|e| match lang {
+        Lang::En => format!("Failed to write ({}): {e}", path.display()),
+        Lang::Ja => format!("書き込みに失敗しました ({}): {e}", path.display()),
+    })?;
     Ok(path)
 }
 
@@ -208,7 +231,7 @@ fn zshenv_block(bin: &str) -> String {
 
 /// Determines where `install claude` should write, and appends there.
 pub fn install_claude(bin: &str) -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME が未設定です".to_string())?;
+    let home = std::env::var("HOME").map_err(|_| home_unset_error())?;
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let target = zshenv_target(
         &home,
@@ -283,14 +306,22 @@ fn shell_bin_expr(bin: &str, home: &str) -> String {
 /// The body of `install_claude`. Like `install_copilot_in`, takes the
 /// destination path explicitly for testability.
 fn install_claude_in(bin: &str, path: &Path) -> Result<PathBuf, String> {
+    let lang = Lang::from_env();
     let existing = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("読み込みに失敗しました ({}): {e}", path.display())),
+        Err(e) => {
+            return Err(match lang {
+                Lang::En => format!("Failed to read ({}): {e}", path.display()),
+                Lang::Ja => format!("読み込みに失敗しました ({}): {e}", path.display()),
+            })
+        }
     };
     let body = upsert_block(&existing, &zshenv_block(bin))?;
-    std::fs::write(path, body)
-        .map_err(|e| format!("書き込みに失敗しました ({}): {e}", path.display()))?;
+    std::fs::write(path, body).map_err(|e| match lang {
+        Lang::En => format!("Failed to write ({}): {e}", path.display()),
+        Lang::Ja => format!("書き込みに失敗しました ({}): {e}", path.display()),
+    })?;
     Ok(path.to_path_buf())
 }
 
@@ -322,10 +353,16 @@ fn upsert_block(body: &str, block: &str) -> Result<String, String> {
             out.push_str(block);
             Ok(out)
         }
-        _ => Err(format!(
-            "既存の `{ZSHENV_BEGIN}` / `{ZSHENV_END}` の対応が壊れています。\
-             手で区画を削除してから再実行してください"
-        )),
+        _ => Err(match Lang::from_env() {
+            Lang::En => format!(
+                "The existing `{ZSHENV_BEGIN}` / `{ZSHENV_END}` pairing is broken. \
+                 Remove the block by hand and re-run"
+            ),
+            Lang::Ja => format!(
+                "既存の `{ZSHENV_BEGIN}` / `{ZSHENV_END}` の対応が壊れています。\
+                 手で区画を削除してから再実行してください"
+            ),
+        }),
     }
 }
 

@@ -8,6 +8,7 @@ use std::process::Command;
 
 use serde::Deserialize;
 
+use crate::lang::Lang;
 use crate::model::{
     agent_from_title, derive_state, is_working_title, task_from_title, Group, Pane, Snapshot, State,
 };
@@ -70,18 +71,30 @@ fn wezterm_bin() -> String {
 
 /// This is the only subprocess spawned per tick (design spec §4.4).
 pub fn list_panes() -> Result<Vec<CliPaneInfo>, String> {
+    let lang = Lang::from_env();
     let out = Command::new(wezterm_bin())
         .args(["cli", "list", "--format", "json"])
         .output()
-        .map_err(|e| format!("wezterm cli の起動に失敗: {e}"))?;
+        .map_err(|e| match lang {
+            Lang::En => format!("Failed to launch wezterm cli: {e}"),
+            Lang::Ja => format!("wezterm cli の起動に失敗: {e}"),
+        })?;
     if !out.status.success() {
-        return Err(format!(
-            "wezterm cli list が失敗: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        return Err(match lang {
+            Lang::En => format!(
+                "wezterm cli list failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+            Lang::Ja => format!(
+                "wezterm cli list が失敗: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        });
     }
-    let panes: Vec<CliPane> =
-        serde_json::from_slice(&out.stdout).map_err(|e| format!("JSONの解析に失敗: {e}"))?;
+    let panes: Vec<CliPane> = serde_json::from_slice(&out.stdout).map_err(|e| match lang {
+        Lang::En => format!("Failed to parse JSON: {e}"),
+        Lang::Ja => format!("JSONの解析に失敗: {e}"),
+    })?;
     Ok(panes
         .into_iter()
         .map(|p| CliPaneInfo {
@@ -252,16 +265,23 @@ pub fn jump(pane_id: u64) -> Result<(), String> {
 /// id is needed. There's no cli fallback: only the GUI side knows which
 /// workspace that was.
 pub fn back() -> Result<(), String> {
+    let lang = Lang::from_env();
     let mut tty = OpenOptions::new()
         .write(true)
         .open("/dev/tty")
-        .map_err(|e| format!("/dev/tty を開けません: {e}"))?;
+        .map_err(|e| match lang {
+            Lang::En => format!("Couldn't open /dev/tty: {e}"),
+            Lang::Ja => format!("/dev/tty を開けません: {e}"),
+        })?;
     // The value itself is unused; user-var-changed fires even when
     // re-setting the same value (see `jump`).
     let seq = format!("\x1b]1337;SetUserVar=wezterm_agents_back={}\x07", b64(b"1"));
     tty.write_all(seq.as_bytes())
         .and_then(|()| tty.flush())
-        .map_err(|e| format!("戻る要求の送信に失敗: {e}"))
+        .map_err(|e| match lang {
+            Lang::En => format!("Failed to send the back request: {e}"),
+            Lang::Ja => format!("戻る要求の送信に失敗: {e}"),
+        })
 }
 
 /// Name of the file (under the state directory) through which the plugin
@@ -281,17 +301,27 @@ pub fn take_dashboard_origin() -> Option<u64> {
 }
 
 fn activate_pane_fallback(pane_id: u64) -> Result<(), String> {
+    let lang = Lang::from_env();
     let out = Command::new(wezterm_bin())
         .args(["cli", "activate-pane", "--pane-id", &pane_id.to_string()])
         .output()
-        .map_err(|e| format!("activate-pane の起動に失敗: {e}"))?;
+        .map_err(|e| match lang {
+            Lang::En => format!("Failed to launch activate-pane: {e}"),
+            Lang::Ja => format!("activate-pane の起動に失敗: {e}"),
+        })?;
     if out.status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "activate-pane が失敗: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
+        Err(match lang {
+            Lang::En => format!(
+                "activate-pane failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+            Lang::Ja => format!(
+                "activate-pane が失敗: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        })
     }
 }
 
