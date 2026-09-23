@@ -61,7 +61,7 @@ struct Options {
     interval: Option<Duration>,
 }
 
-fn parse_args() -> Result<Options, String> {
+fn parse_args(lang: lang::Lang) -> Result<Options, String> {
     let mut opts = Options {
         watch: false,
         resident: false,
@@ -78,26 +78,68 @@ fn parse_args() -> Result<Options, String> {
             }
             "--print" | "-p" => opts.print = true,
             "--interval" | "-i" => {
-                let v = args.next().ok_or("--interval には秒数が要ります")?;
-                let secs: u64 = v.parse().map_err(|_| format!("秒数が不正です: {v}"))?;
+                let v = args.next().ok_or_else(|| match lang {
+                    lang::Lang::En => "--interval requires a number of seconds".to_string(),
+                    lang::Lang::Ja => "--interval には秒数が要ります".to_string(),
+                })?;
+                let secs: u64 = v.parse().map_err(|_| match lang {
+                    lang::Lang::En => format!("Invalid number of seconds: {v}"),
+                    lang::Lang::Ja => format!("秒数が不正です: {v}"),
+                })?;
                 if secs == 0 {
-                    return Err("--interval は1以上にしてください".into());
+                    return Err(match lang {
+                        lang::Lang::En => "--interval must be at least 1".to_string(),
+                        lang::Lang::Ja => "--interval は1以上にしてください".to_string(),
+                    });
                 }
                 opts.interval = Some(Duration::from_secs(secs));
             }
             "--help" | "-h" => {
-                print_help();
+                print_help(lang);
                 std::process::exit(0);
             }
-            other => return Err(format!("不明なオプション: {other}")),
+            other => {
+                return Err(match lang {
+                    lang::Lang::En => format!("Unknown option: {other}"),
+                    lang::Lang::Ja => format!("不明なオプション: {other}"),
+                })
+            }
         }
     }
     Ok(opts)
 }
 
-fn print_help() {
-    println!(
-        "\
+fn print_help(lang: lang::Lang) {
+    let text = match lang {
+        lang::Lang::En => "\
+AI agent list on WezTerm
+
+  wezterm-agents                 Launcher (exits once you jump)
+  wezterm-agents --watch         Persistent dashboard
+  wezterm-agents --resident      Persistent version for the plugin's dashboard key
+                                 (q/Esc returns to the original workspace; Ctrl+C quits)
+  wezterm-agents --print         Print once, no interaction
+  wezterm-agents --interval <sec> Set the tick interval explicitly
+
+Subcommands:
+  wezterm-agents hook --agent <name> <pretool|waiting|done|working>
+                                 Entry point called from an agent's hook.
+                                 Pass the agent's JSON payload on stdin
+  wezterm-agents status-dir      Print the state directory path
+  wezterm-agents init <zsh|bash|fish>
+                                 Print the shell function that injects Claude
+                                 Code's hooks. To set up by hand, add
+                                 `eval \"$(wezterm-agents init zsh)\"` to ~/.zshenv
+  wezterm-agents install claude  Append the line above to ~/.zshenv (zsh only;
+                                 re-run to update. Only touches its marker block)
+  wezterm-agents install copilot Write the Copilot CLI hook file to
+                                 ~/.copilot/hooks/wezterm-agents.json
+
+Keys:
+  ↑/↓ k/j  move      ⏎  jump    e  edit memo
+  r  mark read    R  mark all read   /  filter    g  refresh now
+  Tab  toggle view (list⇄detail)           q/Esc  quit",
+        lang::Lang::Ja => "\
 WezTerm 上のAIエージェント一覧
 
   wezterm-agents                 ランチャー（ジャンプで終了）
@@ -124,8 +166,9 @@ WezTerm 上のAIエージェント一覧
 キー:
   ↑/↓ k/j  移動      ⏎  ジャンプ    e  メモ編集
   r 既読    R 全既読   /  絞り込み    g  即時更新
-  Tab 表示切替(一覧⇄詳細)           q/Esc 終了"
-    );
+  Tab 表示切替(一覧⇄詳細)           q/Esc 終了",
+    };
+    println!("{text}");
 }
 
 /// Dispatches subcommands. Anything other than the TUI is handled and
@@ -173,8 +216,15 @@ fn dispatch_subcommand() -> bool {
 /// Code's hooks to stdout (meant to be loaded via
 /// `eval "$(wezterm-agents init zsh)"` — see setup.rs).
 fn run_init(args: Vec<String>) {
+    let lang = lang::Lang::from_env();
     let Some(shell) = args.first() else {
-        eprintln!("wezterm-agents init: シェル名が要ります (zsh|bash|fish)");
+        eprintln!(
+            "{}",
+            match lang {
+                lang::Lang::En => "wezterm-agents init: a shell name is required (zsh|bash|fish)",
+                lang::Lang::Ja => "wezterm-agents init: シェル名が要ります (zsh|bash|fish)",
+            }
+        );
         std::process::exit(1);
     };
     let result = setup::current_bin().and_then(|bin| setup::shell_init(shell, &bin));
@@ -196,24 +246,53 @@ fn run_init(args: Vec<String>) {
 ///   already defined).
 /// - `copilot`: writes a drop-in file under `~/.copilot/hooks/`.
 fn run_install(args: Vec<String>) {
+    let lang = lang::Lang::from_env();
     let target = args.first().map(String::as_str);
     let result = match target {
         Some("claude") => setup::current_bin().and_then(|bin| setup::install_claude(&bin)),
         Some("copilot") => setup::current_bin().and_then(|bin| setup::install_copilot(&bin)),
         Some(other) => {
-            eprintln!("wezterm-agents install: 不明なターゲットです: {other}（claude | copilot）");
+            eprintln!(
+                "{}",
+                match lang {
+                    lang::Lang::En =>
+                        format!("wezterm-agents install: unknown target: {other} (claude | copilot)"),
+                    lang::Lang::Ja =>
+                        format!("wezterm-agents install: 不明なターゲットです: {other}（claude | copilot）"),
+                }
+            );
             std::process::exit(1);
         }
         None => {
-            eprintln!("wezterm-agents install: ターゲットが要ります（claude | copilot）");
+            eprintln!(
+                "{}",
+                match lang {
+                    lang::Lang::En => "wezterm-agents install: a target is required (claude | copilot)",
+                    lang::Lang::Ja => "wezterm-agents install: ターゲットが要ります（claude | copilot）",
+                }
+            );
             std::process::exit(1);
         }
     };
     match result {
         Ok(path) => {
-            println!("書き込みました: {}", path.display());
+            println!(
+                "{}",
+                match lang {
+                    lang::Lang::En => format!("Wrote: {}", path.display()),
+                    lang::Lang::Ja => format!("書き込みました: {}", path.display()),
+                }
+            );
             if target == Some("claude") {
-                println!("新しいシェルから有効になります（既に開いているシェルには反映されません）");
+                println!(
+                    "{}",
+                    match lang {
+                        lang::Lang::En =>
+                            "Takes effect in new shells (already-open shells won't pick it up)",
+                        lang::Lang::Ja =>
+                            "新しいシェルから有効になります（既に開いているシェルには反映されません）",
+                    }
+                );
             }
         }
         Err(e) => {
@@ -231,6 +310,7 @@ fn run_install(args: Vec<String>) {
 /// reason to halt the agent's work, so we only write failures to stderr
 /// and always exit 0.
 fn run_hook(args: Vec<String>) {
+    let lang = lang::Lang::from_env();
     let mut agent = String::new();
     let mut event: Option<hook::Event> = None;
     let mut it = args.into_iter();
@@ -239,14 +319,27 @@ fn run_hook(args: Vec<String>) {
             "--agent" | "-a" => match it.next() {
                 Some(v) => agent = v,
                 None => {
-                    eprintln!("wezterm-agents hook: --agent にはエージェント名が要ります");
+                    eprintln!(
+                        "{}",
+                        match lang {
+                            lang::Lang::En =>
+                                "wezterm-agents hook: --agent requires an agent name",
+                            lang::Lang::Ja => "wezterm-agents hook: --agent にはエージェント名が要ります",
+                        }
+                    );
                     return;
                 }
             },
             other => match hook::Event::parse(other) {
                 Some(e) => event = Some(e),
                 None => {
-                    eprintln!("wezterm-agents hook: 不明な引数: {other}");
+                    eprintln!(
+                        "{}",
+                        match lang {
+                            lang::Lang::En => format!("wezterm-agents hook: unknown argument: {other}"),
+                            lang::Lang::Ja => format!("wezterm-agents hook: 不明な引数: {other}"),
+                        }
+                    );
                     return;
                 }
             },
@@ -255,12 +348,24 @@ fn run_hook(args: Vec<String>) {
 
     let Some(event) = event else {
         eprintln!(
-            "wezterm-agents hook: イベント名が要ります (pretool|waiting|done|working)"
+            "{}",
+            match lang {
+                lang::Lang::En =>
+                    "wezterm-agents hook: an event name is required (pretool|waiting|done|working)",
+                lang::Lang::Ja =>
+                    "wezterm-agents hook: イベント名が要ります (pretool|waiting|done|working)",
+            }
         );
         return;
     };
     if agent.is_empty() {
-        eprintln!("wezterm-agents hook: --agent <name> が要ります");
+        eprintln!(
+            "{}",
+            match lang {
+                lang::Lang::En => "wezterm-agents hook: --agent <name> is required",
+                lang::Lang::Ja => "wezterm-agents hook: --agent <name> が要ります",
+            }
+        );
         return;
     }
 
@@ -274,11 +379,18 @@ fn main() {
         return;
     }
 
-    let opts = match parse_args() {
+    let lang = lang::Lang::from_env();
+    let opts = match parse_args(lang) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("{e}");
-            eprintln!("`--help` で使い方を表示します");
+            eprintln!(
+                "{}",
+                match lang {
+                    lang::Lang::En => "Run `--help` to see usage",
+                    lang::Lang::Ja => "`--help` で使い方を表示します",
+                }
+            );
             std::process::exit(2);
         }
     };
@@ -419,9 +531,16 @@ fn run(opts: Options) -> Result<(), String> {
         .collect();
     memo::gc_stale(&live_tabs);
 
-    let mut terminal = setup_terminal().map_err(|e| format!("端末の初期化に失敗: {e}"))?;
+    let lang = lang::Lang::from_env();
+    let mut terminal = setup_terminal().map_err(|e| match lang {
+        lang::Lang::En => format!("Failed to initialize the terminal: {e}"),
+        lang::Lang::Ja => format!("端末の初期化に失敗: {e}"),
+    })?;
     let result = event_loop(&mut terminal, &mut app, &opts);
-    restore_terminal(&mut terminal).map_err(|e| format!("端末の復元に失敗: {e}"))?;
+    restore_terminal(&mut terminal).map_err(|e| match lang {
+        lang::Lang::En => format!("Failed to restore the terminal: {e}"),
+        lang::Lang::Ja => format!("端末の復元に失敗: {e}"),
+    })?;
     result
 }
 
@@ -455,6 +574,7 @@ fn event_loop(
     // enabled, so right after startup we don't actually know whether we're
     // focused. The launcher was just started by the user, so we assume
     // it's focused and start at the fast tick rate (spec §4.4).
+    let lang = lang::Lang::from_env();
     let mut focused = true;
     let mut last_tick = Instant::now();
 
@@ -468,7 +588,10 @@ fn event_loop(
                 narrow = f.area().width < ui::NARROW_COLS;
                 ui::draw(f, app);
             })
-            .map_err(|e| format!("描画に失敗: {e}"))?;
+            .map_err(|e| match lang {
+                lang::Lang::En => format!("Failed to draw: {e}"),
+                lang::Lang::Ja => format!("描画に失敗: {e}"),
+            })?;
 
         let tick = current_tick(opts, focused);
         let mut timeout = tick.saturating_sub(last_tick.elapsed());
@@ -478,8 +601,14 @@ fn event_loop(
             timeout = timeout.min(Duration::from_millis(20));
         }
 
-        if event::poll(timeout).map_err(|e| format!("入力待ちに失敗: {e}"))? {
-            match event::read().map_err(|e| format!("入力の読み取りに失敗: {e}"))? {
+        if event::poll(timeout).map_err(|e| match lang {
+            lang::Lang::En => format!("Failed to wait for input: {e}"),
+            lang::Lang::Ja => format!("入力待ちに失敗: {e}"),
+        })? {
+            match event::read().map_err(|e| match lang {
+                lang::Lang::En => format!("Failed to read input: {e}"),
+                lang::Lang::Ja => format!("入力の読み取りに失敗: {e}"),
+            })? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     handle_key(app, key, narrow)
                 }
@@ -531,15 +660,25 @@ fn open_editor(
     tab_id: u64,
     cwd: &str,
 ) -> Result<(), String> {
-    let path = memo::ensure_file(tab_id, cwd).map_err(|e| format!("メモの作成に失敗: {e}"))?;
+    let lang = lang::Lang::from_env();
+    let path = memo::ensure_file(tab_id, cwd).map_err(|e| match lang {
+        lang::Lang::En => format!("Failed to create the memo: {e}"),
+        lang::Lang::Ja => format!("メモの作成に失敗: {e}"),
+    })?;
 
-    disable_raw_mode().map_err(|e| format!("raw mode 解除に失敗: {e}"))?;
+    disable_raw_mode().map_err(|e| match lang {
+        lang::Lang::En => format!("Failed to disable raw mode: {e}"),
+        lang::Lang::Ja => format!("raw mode 解除に失敗: {e}"),
+    })?;
     execute!(
         terminal.backend_mut(),
         DisableFocusChange,
         LeaveAlternateScreen
     )
-    .map_err(|e| format!("代替スクリーンの解除に失敗: {e}"))?;
+    .map_err(|e| match lang {
+        lang::Lang::En => format!("Failed to leave the alternate screen: {e}"),
+        lang::Lang::Ja => format!("代替スクリーンの解除に失敗: {e}"),
+    })?;
 
     let editor = memo::resolve_editor();
     let status = Command::new(&editor).arg(&path).status();
@@ -551,12 +690,21 @@ fn open_editor(
         terminal.clear()
     })();
 
-    resume.map_err(|e| format!("端末の復帰に失敗: {e}"))?;
+    resume.map_err(|e| match lang {
+        lang::Lang::En => format!("Failed to resume the terminal: {e}"),
+        lang::Lang::Ja => format!("端末の復帰に失敗: {e}"),
+    })?;
 
     match status {
         Ok(s) if s.success() => Ok(()),
-        Ok(s) => Err(format!("{editor} が異常終了しました ({s})")),
-        Err(e) => Err(format!("{editor} の起動に失敗: {e}")),
+        Ok(s) => Err(match lang {
+            lang::Lang::En => format!("{editor} exited abnormally ({s})"),
+            lang::Lang::Ja => format!("{editor} が異常終了しました ({s})"),
+        }),
+        Err(e) => Err(match lang {
+            lang::Lang::En => format!("Failed to launch {editor}: {e}"),
+            lang::Lang::Ja => format!("{editor} の起動に失敗: {e}"),
+        }),
     }
 }
 

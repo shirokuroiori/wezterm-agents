@@ -22,7 +22,7 @@ fn tmp_dir(label: &str) -> PathBuf {
 #[test]
 fn verify_accepts_a_private_dir_we_own() {
     let dir = tmp_dir("verify-ok");
-    assert!(verify(&dir).is_ok());
+    assert!(verify(&dir, Lang::En).is_ok());
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -31,8 +31,10 @@ fn verify_rejects_a_group_or_world_accessible_dir() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tmp_dir("verify-perm");
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
-    let err = verify(&dir).unwrap_err();
-    assert!(err.contains("他ユーザーからアクセス可能"), "{err}");
+    let err = verify(&dir, Lang::En).unwrap_err();
+    assert!(err.contains("accessible by other users"), "{err}");
+    let err_ja = verify(&dir, Lang::Ja).unwrap_err();
+    assert!(err_ja.contains("他ユーザーからアクセス可能"), "{err_ja}");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -43,7 +45,7 @@ fn verify_rejects_a_symlink() {
     let link = dir.join("link");
     DirBuilder::new().mode(0o700).create(&real).unwrap();
     std::os::unix::fs::symlink(&real, &link).unwrap();
-    let err = verify(&link).unwrap_err();
+    let err = verify(&link, Lang::En).unwrap_err();
     assert!(err.contains("symlink"), "{err}");
     let _ = fs::remove_dir_all(&dir);
 }

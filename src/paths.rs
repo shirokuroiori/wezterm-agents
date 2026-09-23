@@ -38,6 +38,8 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use crate::lang::Lang;
+
 /// Env var for an explicit override. If you set it, set it in both the shell and wezterm.
 pub const STATUS_DIR_ENV: &str = "WEZTERM_AGENTS_STATUS_DIR";
 
@@ -74,6 +76,7 @@ pub fn status_dir() -> &'static Path {
 /// writing into a hijacked directory.
 pub fn ensure_status_dir() -> Result<&'static Path, String> {
     let dir = status_dir();
+    let lang = Lang::from_env();
     if !dir.exists() {
         // Doing `create_dir_all` + `set_permissions` as two separate steps would let
         // another user slip in between them. `DirBuilder::mode` passes the mode
@@ -83,44 +86,69 @@ pub fn ensure_status_dir() -> Result<&'static Path, String> {
             .recursive(true)
             .mode(0o700)
             .create(dir)
-            .map_err(|e| format!("状態ディレクトリを作成できません ({}): {e}", dir.display()))?;
+            .map_err(|e| match lang {
+                Lang::En => format!("Couldn't create the state directory ({}): {e}", dir.display()),
+                Lang::Ja => format!("状態ディレクトリを作成できません ({}): {e}", dir.display()),
+            })?;
     }
-    verify(dir)?;
+    verify(dir, lang)?;
     Ok(dir)
 }
 
-fn verify(dir: &Path) -> Result<(), String> {
+fn verify(dir: &Path, lang: Lang) -> Result<(), String> {
     // Look without following symlinks. Following it would end up verifying that "the
     // symlink target is safe" while missing the real issue: "the path itself was
     // swapped out."
-    let meta = fs::symlink_metadata(dir)
-        .map_err(|e| format!("状態ディレクトリを stat できません ({}): {e}", dir.display()))?;
+    let meta = fs::symlink_metadata(dir).map_err(|e| match lang {
+        Lang::En => format!("Couldn't stat the state directory ({}): {e}", dir.display()),
+        Lang::Ja => format!("状態ディレクトリを stat できません ({}): {e}", dir.display()),
+    })?;
     if meta.file_type().is_symlink() {
-        return Err(format!(
-            "状態ディレクトリが symlink です ({})。すり替えの可能性があるため使いません",
-            dir.display()
-        ));
+        return Err(match lang {
+            Lang::En => format!(
+                "The state directory is a symlink ({}); refusing to use it, since it may have been swapped out",
+                dir.display()
+            ),
+            Lang::Ja => format!(
+                "状態ディレクトリが symlink です ({})。すり替えの可能性があるため使いません",
+                dir.display()
+            ),
+        });
     }
     if !meta.is_dir() {
-        return Err(format!(
-            "状態ディレクトリがディレクトリではありません ({})",
-            dir.display()
-        ));
+        return Err(match lang {
+            Lang::En => format!("The state directory is not a directory ({})", dir.display()),
+            Lang::Ja => format!("状態ディレクトリがディレクトリではありません ({})", dir.display()),
+        });
     }
     if meta.uid() != uid() {
-        return Err(format!(
-            "状態ディレクトリの所有者が別ユーザーです ({}, uid={})。使いません",
-            dir.display(),
-            meta.uid()
-        ));
+        return Err(match lang {
+            Lang::En => format!(
+                "The state directory is owned by a different user ({}, uid={}); refusing to use it",
+                dir.display(),
+                meta.uid()
+            ),
+            Lang::Ja => format!(
+                "状態ディレクトリの所有者が別ユーザーです ({}, uid={})。使いません",
+                dir.display(),
+                meta.uid()
+            ),
+        });
     }
     // If any group/other bits are set, another user could read or write it.
     if meta.mode() & 0o077 != 0 {
-        return Err(format!(
-            "状態ディレクトリが他ユーザーからアクセス可能です ({}, mode={:o})。使いません",
-            dir.display(),
-            meta.mode() & 0o7777
-        ));
+        return Err(match lang {
+            Lang::En => format!(
+                "The state directory is accessible by other users ({}, mode={:o}); refusing to use it",
+                dir.display(),
+                meta.mode() & 0o7777
+            ),
+            Lang::Ja => format!(
+                "状態ディレクトリが他ユーザーからアクセス可能です ({}, mode={:o})。使いません",
+                dir.display(),
+                meta.mode() & 0o7777
+            ),
+        });
     }
     Ok(())
 }
