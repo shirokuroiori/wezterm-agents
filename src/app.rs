@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::lang::Lang;
 use crate::model::{Pane, Snapshot};
 use crate::store::Store;
 use crate::wezterm;
@@ -63,6 +64,10 @@ pub struct App {
     /// is pressed. app.rs doesn't own a Terminal, so the actual launch
     /// happens on the main.rs side.
     pub pending_edit: Option<(u64, String)>,
+    /// Display language for dashboard text (spec: README's "Language"
+    /// section). Read once at startup from `WEZTERM_AGENTS_LANG`, which
+    /// plugin/init.lua's `lang` option sets.
+    pub lang: Lang,
     store: Store,
     self_pane: Option<u64>,
     /// The pane that was active when cmd+shift+a was pressed. Read from
@@ -92,6 +97,7 @@ impl App {
             exit_on_jump,
             pending_exit: None,
             pending_edit: None,
+            lang: Lang::from_env(),
             store: Store::new(),
             self_pane,
             origin_pane,
@@ -271,7 +277,13 @@ impl App {
                     // comment for why.
                     self.pending_exit =
                         Some(std::time::Instant::now() + JUMP_EXIT_TIMEOUT);
-                    self.message = Some("ジャンプ中…".into());
+                    self.message = Some(
+                        match self.lang {
+                            Lang::En => "Jumping…",
+                            Lang::Ja => "ジャンプ中…",
+                        }
+                        .into(),
+                    );
                 }
             }
             Err(e) => self.message = Some(e),

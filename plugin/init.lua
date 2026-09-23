@@ -779,6 +779,10 @@ end
 --                auto-detected (via `wezterm.plugin.require`, or `dofile`
 --                with a short enough path). Only needed when detection
 --                fails, which shows up in the debug log.
+--   lang         Dashboard (`wezterm-agents` / `--watch`) display language:
+--                'en' (default) or 'ja'. Passed to the `wezterm-agents`
+--                binary via WEZTERM_AGENTS_LANG, so it also applies to
+--                notification text written by the hook subcommand.
 --
 -- Pane-jump and read-tracking (reading/writing the TUI's state files) are
 -- always wired up regardless of the settings above.
@@ -801,6 +805,11 @@ function M.apply_to_config(config, opts)
   end
   if opts.debug then
     debug_enabled = true
+  end
+  if opts.lang then
+    local env = config.set_environment_variables or {}
+    env.WEZTERM_AGENTS_LANG = opts.lang
+    config.set_environment_variables = env
   end
   bins = bin_candidates(opts.bin)
 

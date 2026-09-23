@@ -1,40 +1,51 @@
 use super::*;
+use crate::lang::Lang;
 
 #[test]
 fn tool_summary_matches_the_old_jq_program() {
     assert_eq!(
-        tool_summary("Bash", &json!({ "command": "ls -la\necho second" })),
+        tool_summary("Bash", &json!({ "command": "ls -la\necho second" }), Lang::En),
         "Bash: ls -la"
     );
     assert_eq!(
-        tool_summary("Edit", &json!({ "file_path": "/tmp/a.rs", "old_string": "x" })),
+        tool_summary("Edit", &json!({ "file_path": "/tmp/a.rs", "old_string": "x" }), Lang::En),
         "Edit: /tmp/a.rs"
     );
     assert_eq!(
-        tool_summary("NotebookEdit", &json!({ "notebook_path": "/tmp/n.ipynb" })),
+        tool_summary("NotebookEdit", &json!({ "notebook_path": "/tmp/n.ipynb" }), Lang::En),
         "NotebookEdit: /tmp/n.ipynb"
     );
     assert_eq!(
-        tool_summary("ExitPlanMode", &json!({ "plan": "# 計画\n本文" })),
-        "プラン承認待ち: # 計画"
+        tool_summary("ExitPlanMode", &json!({ "plan": "# 計画\n本文" }), Lang::En),
+        "Plan approval pending: # 計画"
     );
     assert_eq!(
         tool_summary(
             "AskUserQuestion",
-            &json!({ "questions": [{ "question": "A?" }, { "question": "B?" }] })
+            &json!({ "questions": [{ "question": "A?" }, { "question": "B?" }] }),
+            Lang::En
         ),
         "A? / B?"
     );
     // An unknown tool falls back to the default message
-    assert_eq!(tool_summary("Glob", &json!({})), "Glob の許可待ち");
+    assert_eq!(tool_summary("Glob", &json!({}), Lang::En), "Glob: awaiting approval");
     // Missing required fields also fall back to the default message
-    assert_eq!(tool_summary("Bash", &json!({})), "Bash の許可待ち");
+    assert_eq!(tool_summary("Bash", &json!({}), Lang::En), "Bash: awaiting approval");
+}
+
+#[test]
+fn tool_summary_uses_japanese_strings_when_selected() {
+    assert_eq!(
+        tool_summary("ExitPlanMode", &json!({ "plan": "# 計画\n本文" }), Lang::Ja),
+        "プラン承認待ち: # 計画"
+    );
+    assert_eq!(tool_summary("Glob", &json!({}), Lang::Ja), "Glob の許可待ち");
 }
 
 #[test]
 fn tool_summary_is_clipped_by_codepoints() {
     let long = "あ".repeat(200);
-    let s = tool_summary("Bash", &json!({ "command": long }));
+    let s = tool_summary("Bash", &json!({ "command": long }), Lang::En);
     // "Bash: " (6) + 74 chars + "…" = 81 code points
     assert_eq!(s.chars().count(), SUMMARY_MAX + 1);
     assert!(s.ends_with('…'));
