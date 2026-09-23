@@ -11,7 +11,8 @@
       実施。指摘事項ゼロ。コメント以外のコード差分は無し（実行コードは
       全ファイルでバイト単位一致、変わったのはコメント・doc comment・
       assert失敗メッセージの英訳のみ）と確認済み。`cargo test` 47件通過
-- [ ] `gh repo edit shirokuroiori/wezterm-agents --visibility public` で公開に戻す
+- [x] ~~`gh repo edit shirokuroiori/wezterm-agents --visibility public` で公開に戻す~~ →
+      実施済み。`gh repo view` で `visibility: PUBLIC` を確認
 - [x] ~~コードコメントの英訳~~ → src/*.rs（テストファイル含む）・plugin/init.lua・
       plugin/shell-integration/.zshenv の `//`/`///`/`//!`/`--`/`#` コメントを
       全訳。`cargo test` 47件通過を確認済み。エージェント向けのデバッグログ
@@ -21,8 +22,12 @@
 
 ## 配布・インストール
 
-- [ ] GitHub Releases のビルドパイプライン（CI、クロスコンパイル: macOS
-      arm64/x86_64, Linux x86_64/arm64 など）
+- [x] ~~GitHub Releases のビルドパイプライン（CI、クロスコンパイル: macOS
+      arm64/x86_64, Linux x86_64/arm64 など）~~ → `.github/workflows/release.yml`
+      で実装。`v*.*.*` タグ push（または `workflow_dispatch`）で
+      tag/Cargo.toml のバージョン一致チェック → test/clippy →
+      macOS arm64/x86_64・Linux x86_64/aarch64 の4ターゲットビルド →
+      チェックサム付きで GitHub Release に添付、まで一気通貫
 - [ ] `install.sh` / README に「cargo が無い環境」向けのフォールバックを追加
       （Releases からビルド済みバイナリを取得）
 - [ ] `wezterm.plugin.require 'https://github.com/...'` の実地動作確認。
@@ -34,8 +39,11 @@
 
 ## CI・品質
 
-- [ ] GitHub Actions で `cargo test` / `cargo clippy` / Lua 構文チェック
-      （stylua か luacheck）を回す
+- [x] ~~GitHub Actions で `cargo test` / `cargo clippy` / Lua 構文チェック
+      （stylua か luacheck）を回す~~ → `.github/workflows/ci.yml` で実装。
+      push/PR で `cargo test --all-targets`・`cargo clippy --all-targets -D
+      warnings`・`luac5.4 -p`（stylua/luacheck ではなく luac の構文チェックで
+      代用）を並列実行
 - [ ] 新規マシンでのインストールフローを通しで確認
       （フレッシュ clone → `install.sh` 相当の手順）
 
