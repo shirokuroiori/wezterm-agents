@@ -19,6 +19,25 @@ and workspaces.
 macOS + WezTerm setup. Expect rough edges on other platforms; issues and PRs
 welcome.
 
+<table width="100%">
+  <tr>
+    <th>List + Detail</th>
+    <th>Tab colors</th>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/dashboard_default.png" /></td>
+    <td width="50%"><img src="docs/images/tab_colors.png" /></td>
+  </tr>
+  <tr>
+    <th>List</th>
+    <th>Detail</th>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/dashboard_list.png" /></td>
+    <td width="50%"><img src="docs/images/dashboard_detail.png" /></td>
+  </tr>
+</table>
+
 ## Table of contents
 
 - [✨ What it does](#-what-it-does)
