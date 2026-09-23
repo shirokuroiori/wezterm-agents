@@ -227,6 +227,40 @@ local function status_dir()
   return nil
 end
 
+-- Runs fn(dir) with the state directory, but never spawns a child process
+-- from inside the calling handler. While unresolved, resolution (and fn) is
+-- deferred to a timer callback.
+--
+-- [why] wezterm runs at most one `update-status` per GUI window at a time
+-- and drops new ones while the previous is still InProgress (see
+-- emit_window_event in wezterm-gui/src/termwindow/mod.rs). If a handler's
+-- completion notice is ever lost, that window never gets `update-status`
+-- again. That happened in practice on 2026-09-23: a window's first
+-- update-status yielded inside run_child_process during a config reload,
+-- and read-tracking in that window stayed dead for hours. A timer callback
+-- isn't tied to any window's event state, so yielding there is harmless.
+local function with_status_dir(fn)
+  if status_dir_cache == false then
+    return
+  end
+  if status_dir_cache then
+    fn(status_dir_cache)
+    return
+  end
+  local ok = pcall(wezterm.time.call_after, 0, function()
+    local dir = status_dir()
+    if dir then
+      fn(dir)
+    end
+  end)
+  if not ok then
+    local dir = status_dir()
+    if dir then
+      fn(dir)
+    end
+  end
+end
+
 local function read_file(path)
   local ok, body = pcall(function()
     local f = io.open(path, 'r')
@@ -314,15 +348,15 @@ end
 local function mark_read(pane_id, value)
   dismissed[pane_id] = true
   -- If the state directory isn't available (e.g. the binary is missing),
-  -- fall back to the in-memory read flag for this session only.
-  local dir = status_dir()
-  if not dir then
-    return
-  end
-  write_file(dir .. '/' .. pane_id .. '.read', rfc3339(os.time()))
-  if value then
-    write_file(dir .. '/' .. pane_id .. '.dismissed_value', value)
-  end
+  -- fall back to the in-memory read flag for this session only. The time is
+  -- taken now, so a deferred write still records when it was actually read.
+  local read_at = rfc3339(os.time())
+  with_status_dir(function(dir)
+    write_file(dir .. '/' .. pane_id .. '.read', read_at)
+    if value then
+      write_file(dir .. '/' .. pane_id .. '.dismissed_value', value)
+    end
+  end)
 end
 
 -- Reloading the config wipes `dismissed` along with the rest of Lua state,
@@ -346,12 +380,7 @@ end
 --
 -- (A full WezTerm restart makes panes disappear entirely and reassigns
 -- pane_ids, so in practice this only matters for a config reload.)
-local function restore_dismissed()
-  local dir = status_dir()
-  if not dir then
-    log 'restore_dismissed: 状態ディレクトリが無いので復元しません'
-    return
-  end
+local function restore_dismissed(dir)
   local restored = 0
   for _, mux_win in ipairs(wezterm.mux.all_windows()) do
     for _, mux_tab in ipairs(mux_win:tabs()) do
@@ -461,6 +490,13 @@ local function handle_jump(value)
       activate_target(target_id, mux_pane, mux_tab, mux_win)
     end)
   end
+
+  -- A jump means the user is now looking at the target, so mark it read
+  -- here rather than waiting for update-status to notice the active pane
+  -- changed. That event can stop firing for a window for good (see
+  -- with_status_dir), and read-tracking shouldn't hinge on it.
+  log('  mark_read pane=%d', target_id)
+  mark_read(target_id, current_status_value(mux_pane))
 end
 
 --------------------------------------------------------------------------
@@ -973,9 +1009,11 @@ function M.apply_to_config(config, opts)
     -- can't be resolved during config evaluation (see status_dir()'s
     -- comment), so this is deferred until the first event. update-status
     -- fires within about a second, so there's no perceptible delay.
+    -- with_status_dir keeps the child-process spawn out of this handler (see
+    -- its comment for why that matters).
     if not restored_once then
       restored_once = true
-      restore_dismissed()
+      with_status_dir(restore_dismissed)
     end
     local ok, window_id = pcall(function() return window:window_id() end)
     if not ok then
