@@ -28,6 +28,7 @@ fn app_with_origin(origin_pane: Option<u64>) -> App {
         layout: LayoutMode::Split,
         should_quit: false,
         exit_on_jump: false,
+        resident: false,
         pending_exit: None,
         pending_edit: None,
         lang: crate::lang::Lang::En,
@@ -114,4 +115,47 @@ fn origin_tab_preference_only_applies_on_the_first_rebuild() {
     // A later refresh (e.g. the 1s tick) must not reset it back to 20.
     app.rebuild_rows();
     assert_eq!(app.selected_pane().map(|p| p.pane_id), Some(10));
+}
+
+#[test]
+fn resident_reshow_moves_cursor_to_new_origin_and_clears_filter() {
+    // The resident dashboard is reused, so each dashboard-key press must
+    // re-apply the origin tab even though the cursor already has an anchor.
+    let mut app = app_with_origin(Some(10));
+    app.resident = true;
+    app.snapshot = Snapshot {
+        groups: vec![
+            Group { cwd: "/a".to_string(), panes: vec![pane(10, 1)] },
+            Group { cwd: "/b".to_string(), panes: vec![pane(20, 2)] },
+        ],
+    };
+    app.rebuild_rows();
+    assert_eq!(app.selected_pane().map(|p| p.pane_id), Some(10));
+
+    app.filter = "zzz".to_string();
+    app.filter_active = true;
+    app.reset_view_to_origin(20);
+
+    assert!(app.filter.is_empty());
+    assert!(!app.filter_active);
+    assert_eq!(app.selected_pane().map(|p| p.pane_id), Some(20));
+}
+
+#[test]
+fn resident_reshow_keeps_cursor_when_origin_is_not_an_agent_pane() {
+    let mut app = app_with_origin(None);
+    app.resident = true;
+    app.snapshot = Snapshot {
+        groups: vec![
+            Group { cwd: "/a".to_string(), panes: vec![pane(10, 1)] },
+            Group { cwd: "/b".to_string(), panes: vec![pane(20, 2)] },
+        ],
+    };
+    app.rebuild_rows();
+    app.move_cursor(1);
+    assert_eq!(app.selected_pane().map(|p| p.pane_id), Some(20));
+
+    app.reset_view_to_origin(999);
+
+    assert_eq!(app.selected_pane().map(|p| p.pane_id), Some(20));
 }

@@ -5,6 +5,7 @@
 //! Usage:
 //!   wezterm-agents                 Launcher. Exits once you jump
 //!   wezterm-agents --watch         Persistent dashboard. Stays up after jumping
+//!   wezterm-agents --resident      Persistent dashboard reused by the plugin's dashboard key
 //!   wezterm-agents --print         Print the list once, no interaction
 //!   wezterm-agents --interval 3    Set the tick interval (seconds) explicitly
 //!   wezterm-agents hook ...        Agent hook entry point (hook.rs)
@@ -54,6 +55,8 @@ const TICK_WATCH_BLURRED: Duration = Duration::from_secs(5);
 
 struct Options {
     watch: bool,
+    /// Implies `watch`. See `App::resident`.
+    resident: bool,
     print: bool,
     interval: Option<Duration>,
 }
@@ -61,6 +64,7 @@ struct Options {
 fn parse_args() -> Result<Options, String> {
     let mut opts = Options {
         watch: false,
+        resident: false,
         print: false,
         interval: None,
     };
@@ -68,6 +72,10 @@ fn parse_args() -> Result<Options, String> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--watch" | "-w" => opts.watch = true,
+            "--resident" => {
+                opts.watch = true;
+                opts.resident = true;
+            }
             "--print" | "-p" => opts.print = true,
             "--interval" | "-i" => {
                 let v = args.next().ok_or("--interval には秒数が要ります")?;
@@ -94,6 +102,8 @@ WezTerm 上のAIエージェント一覧
 
   wezterm-agents                 ランチャー（ジャンプで終了）
   wezterm-agents --watch         常駐ダッシュボード
+  wezterm-agents --resident      プラグインのダッシュボードキー用の常駐版
+                                 （q/Esc で元のワークスペースへ戻る。終了は Ctrl+C）
   wezterm-agents --print         対話なしで1回表示して終了
   wezterm-agents --interval <秒> ティック間隔を明示指定
 
@@ -381,7 +391,13 @@ fn print_once() {
 
 fn run(opts: Options) -> Result<(), String> {
     let mut app = App::new(!opts.watch);
+    app.resident = opts.resident;
     app.refresh();
+    // The first show has no FocusGained to hang this on (see event_loop's
+    // `focused`), so pick up the origin the plugin left right away.
+    if app.resident {
+        app.on_focus_gained(wezterm::take_dashboard_origin());
+    }
     // Check once at startup whether the state directory is safe to use.
     // The hook side can only write to stderr (it must always exit 0 so it
     // never blocks the agent), so this message line is effectively the
@@ -467,7 +483,12 @@ fn event_loop(
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     handle_key(app, key, narrow)
                 }
-                Event::FocusGained => focused = true,
+                Event::FocusGained => {
+                    focused = true;
+                    if app.resident {
+                        app.on_focus_gained(wezterm::take_dashboard_origin());
+                    }
+                }
                 Event::FocusLost => {
                     focused = false;
                     // Losing focus right after sending a jump is the

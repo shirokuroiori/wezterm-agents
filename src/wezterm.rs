@@ -245,6 +245,41 @@ pub fn jump(pane_id: u64) -> Result<(), String> {
     activate_pane_fallback(pane_id)
 }
 
+/// Ask the plugin to switch back to the workspace the dashboard was opened
+/// from (`--resident`'s Esc/q). Handled by plugin/init.lua's
+/// user-var-changed, same as `jump`. A workspace keeps its own active
+/// tab/pane, so switching back lands exactly where the user was — no pane
+/// id is needed. There's no cli fallback: only the GUI side knows which
+/// workspace that was.
+pub fn back() -> Result<(), String> {
+    let mut tty = OpenOptions::new()
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|e| format!("/dev/tty を開けません: {e}"))?;
+    // The value itself is unused; user-var-changed fires even when
+    // re-setting the same value (see `jump`).
+    let seq = format!("\x1b]1337;SetUserVar=wezterm_agents_back={}\x07", b64(b"1"));
+    tty.write_all(seq.as_bytes())
+        .and_then(|()| tty.flush())
+        .map_err(|e| format!("戻る要求の送信に失敗: {e}"))
+}
+
+/// Name of the file (under the state directory) through which the plugin
+/// hands the resident dashboard the pane that was active when the
+/// dashboard key was pressed. Kept in sync with DASHBOARD_ORIGIN_FILE in
+/// plugin/init.lua.
+const DASHBOARD_ORIGIN_FILE: &str = "dashboard-origin";
+
+/// Read and remove the origin pane the plugin left for us. Removing it
+/// makes this one-shot: FocusGained also fires on returning from the editor
+/// or from another app, and those shouldn't move the cursor.
+pub fn take_dashboard_origin() -> Option<u64> {
+    let path = crate::paths::status_dir().join(DASHBOARD_ORIGIN_FILE);
+    let body = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    body.trim().parse().ok()
+}
+
 fn activate_pane_fallback(pane_id: u64) -> Result<(), String> {
     let out = Command::new(wezterm_bin())
         .args(["cli", "activate-pane", "--pane-id", &pane_id.to_string()])

@@ -49,6 +49,12 @@ pub struct App {
     pub should_quit: bool,
     /// In launcher mode, quit once a jump happens.
     pub exit_on_jump: bool,
+    /// `--resident`: the dashboard lives in its own workspace and is
+    /// reused across dashboard-key presses instead of being respawned. Esc/q
+    /// switch back to the previous workspace rather than quitting (Ctrl+C
+    /// still quits), and each time the dashboard is shown the cursor moves
+    /// to the tab it was opened from.
+    pub resident: bool,
     /// Deadline while waiting for focus to actually move after a jump is
     /// sent.
     ///
@@ -95,6 +101,7 @@ impl App {
             layout: LayoutMode::Split,
             should_quit: false,
             exit_on_jump,
+            resident: false,
             pending_exit: None,
             pending_edit: None,
             lang: Lang::from_env(),
@@ -296,7 +303,16 @@ impl App {
     /// a tab moves focus to the tab on its right) would leave you unable
     /// to get back to the tab you were on before cmd+shift+a. When there's
     /// no origin_pane (e.g. `--watch`), quits immediately as before.
+    ///
+    /// In resident mode this doesn't quit at all: it asks the plugin to
+    /// switch back to the previous workspace (see `wezterm::back`).
     pub fn quit(&mut self) {
+        if self.resident {
+            if let Err(e) = wezterm::back() {
+                self.message = Some(e);
+            }
+            return;
+        }
         match self.origin_pane {
             Some(pane_id) if self.exit_on_jump => self.begin_jump(pane_id),
             _ => self.should_quit = true,
@@ -310,6 +326,34 @@ impl App {
             if std::time::Instant::now() >= deadline {
                 self.should_quit = true;
             }
+        }
+    }
+
+    /// Resident mode: the dashboard was just brought to the front. When
+    /// that was via the dashboard key, `origin` is the pane it was pressed
+    /// from (see `wezterm::take_dashboard_origin`). `None` (editor return,
+    /// switching back from another app) leaves the view untouched.
+    pub fn on_focus_gained(&mut self, origin: Option<u64>) {
+        if !self.resident {
+            return;
+        }
+        let Some(origin) = origin else {
+            return;
+        };
+        // Ticks are slow while hidden, so the snapshot may be stale.
+        self.refresh();
+        self.reset_view_to_origin(origin);
+    }
+
+    /// Make the view look like a freshly spawned launcher would: no filter,
+    /// cursor on the origin tab (falling back to wherever it was).
+    fn reset_view_to_origin(&mut self, origin: u64) {
+        self.origin_pane = Some(origin);
+        self.filter.clear();
+        self.filter_active = false;
+        self.rebuild_rows();
+        if let Some(row) = self.origin_row() {
+            self.cursor = row;
         }
     }
 
