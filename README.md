@@ -91,7 +91,8 @@ agents.apply_to_config(config, {
 ```
 
 See the doc comment at the top of `plugin/init.lua` for the full option list
-(`icons`, `colors`, `bin`, `debug`, `shell_integration`, `plugin_dir`, `lang`)
+(`icons`, `colors`, `bin`, `debug`, `shell_integration`, `plugin_dir`, `lang`,
+`dashboard_key`)
 and the composable-API example. The dashboard's display language defaults to
 English; pass `lang = 'ja'` for Japanese.
 
@@ -145,6 +146,7 @@ only ever touches that one file.
 ```
 wezterm-agents                 launcher (exits after jumping to a pane)
 wezterm-agents --watch         persistent dashboard
+wezterm-agents --resident      persistent dashboard used by the dashboard key
 wezterm-agents --print         print the list once, no interaction
 wezterm-agents --interval <s>  explicit tick interval
 ```
@@ -152,6 +154,17 @@ wezterm-agents --interval <s>  explicit tick interval
 Keys: `↑/↓`/`j/k` move · `Enter` jump · `e` edit notes · `r`/`R` mark
 read · `/` filter · `g` refresh · `Tab` switch list/detail layout ·
 `q`/`Esc` quit.
+
+**Dashboard key.** `apply_to_config` binds `Cmd+Shift+A` to toggle a
+dashboard (`--resident`) that lives in its own `wezterm-agents-dashboard`
+workspace. It's started once and reused, so opening it repeatedly doesn't
+burn through tab ids. Each time it's shown, the cursor starts on the tab you
+opened it from; `Enter` jumps (switching workspace as needed), `q`/`Esc`
+return to where you were, and `Ctrl+C` actually quits it. Change the key
+with `dashboard_key = { key = 'd', mods = 'CTRL|SHIFT' }`, or pass
+`dashboard_key = false` and bind `agents.toggle_dashboard` yourself. The key
+is appended to `config.keys`, so set your own `config.keys` before calling
+`apply_to_config` (or append to it).
 
 ## 📄 License
 

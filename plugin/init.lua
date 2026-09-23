@@ -164,8 +164,8 @@ end
 
 -- nil = not yet resolved / false = resolution failed (don't retry) / string = resolved
 local status_dir_cache = nil
--- The path of the binary that resolution succeeded with. Kept around for
--- any future hook invocation (none yet) or logging.
+-- The path of the binary that resolution succeeded with. Used to spawn the
+-- resident dashboard.
 local resolved_bin = nil
 
 local function log(fmt, ...)
@@ -462,6 +462,101 @@ local function handle_jump(value)
     end)
   end
 end
+
+--------------------------------------------------------------------------
+-- Resident dashboard
+--------------------------------------------------------------------------
+
+-- The dashboard key keeps one `wezterm-agents --resident` in a workspace of
+-- its own and switches to it, instead of spawning a launcher tab on every
+-- press. Spawning each time burns a tab id per press (mux ids are never
+-- reused), so tab ids shown in the tab bar kept climbing.
+local DASHBOARD_WORKSPACE = 'wezterm-agents-dashboard'
+local DEFAULT_DASHBOARD_KEY = { key = 'a', mods = 'CMD|SHIFT' }
+
+-- Kept in sync with DASHBOARD_ORIGIN_FILE in ../src/wezterm.rs. The
+-- resident process was spawned long ago, so an env var can't tell it which
+-- pane the key was pressed from; this file does (read once and removed on
+-- the TUI side).
+local DASHBOARD_ORIGIN_FILE = 'dashboard-origin'
+
+local function workspace_exists(name)
+  local ok, names = pcall(wezterm.mux.get_workspace_names)
+  if not ok then
+    return false
+  end
+  for _, n in ipairs(names) do
+    if n == name then
+      return true
+    end
+  end
+  return false
+end
+
+-- Back to where the dashboard was opened from. Switching the workspace
+-- alone isn't enough: SwitchToWorkspace re-lays out every mux window of
+-- that workspace into GUI windows, and which of them ends up in front is up
+-- to wezterm — with several windows, often not the one the user came from.
+-- So go back to the origin pane the same way a jump does (handle_jump
+-- switches the workspace and then focuses the pane's own window). Only if
+-- that pane has since closed, fall back to switching the workspace: the
+-- previous one, else any other; with none left, stay put rather than
+-- creating a fresh workspace.
+local function dashboard_back(window, pane)
+  local origin = wezterm.GLOBAL.wezterm_agents_origin_pane
+  if origin and find_pane(origin) then
+    log('dashboard back: -> pane %d', origin)
+    handle_jump(tostring(origin))
+    return
+  end
+
+  local prev = wezterm.GLOBAL.wezterm_agents_prev_workspace
+  if not prev or prev == DASHBOARD_WORKSPACE or not workspace_exists(prev) then
+    prev = nil
+    local ok, names = pcall(wezterm.mux.get_workspace_names)
+    for _, n in ipairs(ok and names or {}) do
+      if n ~= DASHBOARD_WORKSPACE then
+        prev = n
+        break
+      end
+    end
+  end
+  log('dashboard back: -> %s', tostring(prev))
+  if prev then
+    window:perform_action(wezterm.action.SwitchToWorkspace { name = prev }, pane)
+  end
+end
+
+local function toggle_dashboard(window, pane)
+  local current = window:active_workspace()
+  if current == DASHBOARD_WORKSPACE then
+    dashboard_back(window, pane)
+    return
+  end
+
+  -- wezterm.GLOBAL rather than a local so it survives config reloads.
+  wezterm.GLOBAL.wezterm_agents_prev_workspace = current
+  wezterm.GLOBAL.wezterm_agents_origin_pane = pane:pane_id()
+  local dir = status_dir()
+  if dir then
+    write_file(dir .. '/' .. DASHBOARD_ORIGIN_FILE, tostring(pane:pane_id()))
+  end
+  -- SwitchToWorkspace only uses `spawn` when the workspace doesn't exist
+  -- yet, so this both starts the dashboard the first time and just
+  -- switches to it afterwards.
+  log('dashboard open: from=%s pane=%d', current, pane:pane_id())
+  window:perform_action(
+    wezterm.action.SwitchToWorkspace {
+      name = DASHBOARD_WORKSPACE,
+      spawn = { args = { resolved_bin or bins[1], '--resident' } },
+    },
+    pane
+  )
+end
+
+-- For binding the dashboard to a key of your own (with `dashboard_key =
+-- false`), e.g. `{ key = 'd', mods = 'LEADER', action = agents.toggle_dashboard }`.
+M.toggle_dashboard = wezterm.action_callback(toggle_dashboard)
 
 --------------------------------------------------------------------------
 -- Status composition (composable primitive)
@@ -783,6 +878,15 @@ end
 --                'en' (default) or 'ja'. Passed to the `wezterm-agents`
 --                binary via WEZTERM_AGENTS_LANG, so it also applies to
 --                notification text written by the hook subcommand.
+--   dashboard_key
+--                {key=, mods=} that toggles the resident dashboard: opens
+--                `wezterm-agents --resident` in its own workspace
+--                ('wezterm-agents-dashboard'), and switches back when
+--                pressed there (default { key = 'a', mods = 'CMD|SHIFT' }).
+--                Appended to `config.keys`, so assign your own
+--                `config.keys` before calling apply_to_config, or append
+--                to it afterwards. false binds nothing; bind
+--                `M.toggle_dashboard` yourself if you want it elsewhere.
 --
 -- Pane-jump and read-tracking (reading/writing the TUI's state files) are
 -- always wired up regardless of the settings above.
@@ -817,9 +921,19 @@ function M.apply_to_config(config, opts)
     setup_shell_integration(config, opts)
   end
 
+  if opts.dashboard_key ~= false then
+    local k = opts.dashboard_key or DEFAULT_DASHBOARD_KEY
+    config.keys = config.keys or {}
+    table.insert(config.keys, { key = k.key, mods = k.mods, action = M.toggle_dashboard })
+  end
+
   wezterm.on('user-var-changed', function(window, pane, name, value)
     if name == 'wezterm_agents_jump' then
       handle_jump(value)
+      return
+    end
+    if name == 'wezterm_agents_back' then
+      dashboard_back(window, pane)
       return
     end
     if not STATUS_VARS[name] then
