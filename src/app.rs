@@ -147,8 +147,14 @@ impl App {
     /// Remember which pane the cursor was on, and return to that same pane
     /// after rebuilding. Without this, resorting on every 1-second rebuild
     /// would make the selection jump around.
+    ///
+    /// On the very first rebuild (`self.rows` still empty from `App::new`),
+    /// there's no prior cursor to anchor on, so instead default to the tab
+    /// that was active before cmd+shift+a was pressed (origin_pane) — see
+    /// `origin_row`.
     pub fn rebuild_rows(&mut self) {
         let anchor = self.selected_pane().map(|p| p.pane_id);
+        let is_startup = self.rows.is_empty();
         let mut rows = Vec::new();
         for (gi, group) in self.snapshot.groups.iter().enumerate() {
             let visible: Vec<usize> = group
@@ -173,6 +179,7 @@ impl App {
 
         self.cursor = anchor
             .and_then(|id| self.row_index_of_pane(id))
+            .or_else(|| is_startup.then(|| self.origin_row()).flatten())
             .or_else(|| self.first_pane_row())
             .unwrap_or(0);
     }
@@ -180,6 +187,26 @@ impl App {
     fn row_index_of_pane(&self, pane_id: u64) -> Option<usize> {
         self.rows.iter().position(|r| match r {
             Row::Pane { group, pane } => self.snapshot.groups[*group].panes[*pane].pane_id == pane_id,
+            Row::Header { .. } | Row::Blank => false,
+        })
+    }
+
+    /// Topmost row belonging to the same tab as `origin_pane` (the tab that
+    /// was active before cmd+shift+a was pressed). If that tab has several
+    /// panes (a split), the topmost one in list order is used. Returns
+    /// `None` when there's no origin_pane (e.g. `--watch`) or it isn't in
+    /// the current snapshot.
+    fn origin_row(&self) -> Option<usize> {
+        let origin_pane_id = self.origin_pane?;
+        let tab_id = self
+            .snapshot
+            .groups
+            .iter()
+            .flat_map(|g| g.panes.iter())
+            .find(|p| p.pane_id == origin_pane_id)?
+            .tab_id;
+        self.rows.iter().position(|r| match r {
+            Row::Pane { group, pane } => self.snapshot.groups[*group].panes[*pane].tab_id == tab_id,
             Row::Header { .. } | Row::Blank => false,
         })
     }
@@ -324,3 +351,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "app_tests.rs"]
+mod tests;
