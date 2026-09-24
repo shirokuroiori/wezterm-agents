@@ -28,8 +28,12 @@
       tag/Cargo.toml のバージョン一致チェック → test/clippy →
       macOS arm64/x86_64・Linux x86_64/aarch64 の4ターゲットビルド →
       チェックサム付きで GitHub Release に添付、まで一気通貫
-- [ ] `install.sh` / README に「cargo が無い環境」向けのフォールバックを追加
-      （Releases からビルド済みバイナリを取得）
+- [x] ~~`install.sh` / README に「cargo が無い環境」向けのフォールバックを追加
+      （Releases からビルド済みバイナリを取得）~~ → リポジトリ直下の
+      `install.sh`（`curl … | sh` でも使える）を追加し、プラグインが起動時に
+      `--managed-only` で呼んで `~/.local/bin` へ自動配置・バージョン追従する
+      （`auto_install`、既定 on）。シンボリックリンクや自前ビルドは上書き
+      しない。**GUI 実機での初回インストール・更新は未検証**
 - [ ] `wezterm.plugin.require 'https://github.com/...'` の実地動作確認。
       **未検証**: `file://` は対象が git リポジトリである必要があり失敗した経緯
       があるが、`https://` 経由の実クローン・`plugin/init.lua` 読み込みは
