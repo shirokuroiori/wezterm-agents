@@ -120,6 +120,7 @@ AI agent list on WezTerm
                                  (q/Esc returns to the original workspace; Ctrl+C quits)
   wezterm-agents --print         Print once, no interaction
   wezterm-agents --interval <sec> Set the tick interval explicitly
+  wezterm-agents --version       Print the version
 
 Subcommands:
   wezterm-agents hook --agent <name> <pretool|waiting|done|working>
@@ -148,6 +149,7 @@ WezTerm 上のAIエージェント一覧
                                  （q/Esc で元のワークスペースへ戻る。終了は Ctrl+C）
   wezterm-agents --print         対話なしで1回表示して終了
   wezterm-agents --interval <秒> ティック間隔を明示指定
+  wezterm-agents --version       バージョンを出力する
 
 サブコマンド:
   wezterm-agents hook --agent <name> <pretool|waiting|done|working>
@@ -206,6 +208,12 @@ fn dispatch_subcommand() -> bool {
         }
         Some("install") => {
             run_install(args.collect());
+            true
+        }
+        Some("--version" | "-V") => {
+            // install.sh compares this against the version it wants, to
+            // decide whether an auto-installed binary is out of date.
+            println!("wezterm-agents {}", env!("CARGO_PKG_VERSION"));
             true
         }
         _ => false,

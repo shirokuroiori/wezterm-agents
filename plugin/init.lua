@@ -89,7 +89,7 @@ local debug_enabled = false
 -- The binary's location can vary by environment (downloaded from GitHub
 -- Releases and placed wherever, installed via a package manager, manually
 -- placed at `~/.local/bin`, etc). `opts.bin` is tried first, then
--- `~/.local/bin/wezterm-agents` (this repo's install.sh default), and
+-- `~/.local/bin/wezterm-agents` (where install.sh / auto_install put it), and
 -- finally plain `wezterm-agents` via PATH resolution. That last candidate
 -- only works in environments where wezterm-gui's PATH isn't the minimal one
 -- it usually gets (i.e. it never went through a shell rc) — e.g. when
@@ -138,6 +138,10 @@ end)(select(2, ...))
 
 -- The shell-integration directory (bundles a `.zshenv`). Sibling of init.lua.
 local SHELL_INTEGRATION_DIR = SELF_PATH and (SELF_PATH:match '^(.*)/[^/]*$' .. '/shell-integration')
+
+-- The repo root (the parent of plugin/). install.sh and Cargo.toml live
+-- there.
+local REPO_ROOT = SELF_PATH and SELF_PATH:match '^(.*)/plugin/[^/]*$'
 
 local function file_exists(path)
   local f = io.open(path, 'r')
@@ -283,6 +287,87 @@ local function write_file(path, body)
     f:write(body)
     f:close()
   end)
+end
+
+--------------------------------------------------------------------------
+-- Binary auto-install
+--------------------------------------------------------------------------
+
+-- The repo root to run install.sh from, set by apply_to_config when
+-- auto_install is on. nil = off.
+local auto_install_root = nil
+-- Display language for this plugin's own toasts ('en' / 'ja').
+local ui_lang = 'en'
+
+-- The version this plugin checkout wants: `version` in the repo's
+-- Cargo.toml, the same number release.yml checks each tag against. Pinning
+-- to it (rather than "latest") keeps the plugin and the binary it installs
+-- from the same release, and makes a plugin update pull the matching binary.
+local function required_version(root)
+  local body = read_file(root .. '/Cargo.toml')
+  if not body then
+    return nil
+  end
+  for line in body:gmatch '[^\n]+' do
+    local v = line:match '^version%s*=%s*"([^"]+)"'
+    if v then
+      return v
+    end
+  end
+  return nil
+end
+
+local INSTALLED_TOAST = {
+  en = 'Installed v%s. Claude Code hooks take effect in new tabs.',
+  ja = 'v%s をインストールしました。Claude Code の hooks は新しいタブから有効になります。',
+}
+
+-- Puts the release binary matching required_version() at
+-- ~/.local/bin/wezterm-agents via install.sh. --managed-only means a
+-- symlink (a local `cargo build`) or a binary install.sh didn't put there
+-- itself is left alone; see install.sh's header for the rules. The common
+-- case ("already current") doesn't touch the network.
+--
+-- Spawns a child process, so only call this from a timer callback (see
+-- with_status_dir for why not from an event handler directly).
+local function ensure_binary(window)
+  local root = auto_install_root
+  if not root then
+    return
+  end
+  local version = required_version(root)
+  if not version then
+    wezterm.log_warn('wezterm-agents: auto_install: ' .. root .. '/Cargo.toml からバージョンを読めませんでした')
+    return
+  end
+  -- The target triple is left to install.sh's own detection rather than
+  -- wezterm.target_triple: an x86_64 wezterm under Rosetta should still get
+  -- the native arm64 binary.
+  local ok, success, stdout, stderr =
+    pcall(wezterm.run_child_process, { 'sh', root .. '/install.sh', '--version', version, '--managed-only' })
+  local result = ok and success and type(stdout) == 'string' and stdout:match '^(%a+)' or nil
+  log('auto_install: v%s -> %s (%s)', version, tostring(result), tostring(stderr))
+  if not result then
+    wezterm.log_warn('wezterm-agents: auto_install failed: ' .. tostring(ok and stderr or success))
+    return
+  end
+  if result == 'installed' or result == 'updated' then
+    -- A status_dir() that ran (and failed) while the download was in
+    -- flight cached `false`. Forget it so the next call resolves again,
+    -- now against the new binary.
+    status_dir_cache = nil
+    resolved_bin = nil
+  end
+  if result == 'installed' and window then
+    pcall(function()
+      window:toast_notification(
+        'wezterm-agents',
+        string.format(INSTALLED_TOAST[ui_lang] or INSTALLED_TOAST.en, version),
+        nil,
+        8000
+      )
+    end)
+  end
 end
 
 -- Matches the format used on the hook side (now_rfc3339 in ../src/util.rs).
@@ -884,6 +969,16 @@ end
 --                the defaults
 --   bin          Explicit path to the `wezterm-agents` binary. When
 --                omitted, tries `~/.local/bin/wezterm-agents` then PATH.
+--                Setting this also turns auto_install off.
+--   auto_install true downloads the release binary matching this plugin's
+--                version (from GitHub Releases, checksum-verified) to
+--                `~/.local/bin/wezterm-agents` on startup, and keeps it in
+--                step when the plugin is updated (default true). Never
+--                replaces a symlink or a binary it didn't install itself
+--                (e.g. a local `cargo build`); see install.sh. Runs after
+--                the first window appears, so on a very first launch the
+--                Claude Code hooks only take effect in tabs opened after
+--                the "installed" toast. false disables it.
 --   debug        true leaves a diagnostic log at
 --                `<status_dir>/wezterm-agents-debug.log` (default false)
 --   tab_title    true has this plugin register `format-tab-title` itself,
@@ -906,7 +1001,8 @@ end
 --                zsh aren't covered yet. Doesn't reach a zsh started
 --                nested inside a pane — combine with
 --                `wezterm-agents install claude` if you need that too.
---   plugin_dir   This repo's root (the parent of `plugin/`). Normally
+--   plugin_dir   This repo's root (the parent of `plugin/`, holding
+--                install.sh and shell-integration/). Normally
 --                auto-detected (via `wezterm.plugin.require`, or `dofile`
 --                with a short enough path). Only needed when detection
 --                fails, which shows up in the debug log.
@@ -951,7 +1047,24 @@ function M.apply_to_config(config, opts)
     env.WEZTERM_AGENTS_LANG = opts.lang
     config.set_environment_variables = env
   end
+  ui_lang = opts.lang or ui_lang
   bins = bin_candidates(opts.bin)
+
+  -- An explicit `bin` means the user manages the binary themselves.
+  if opts.auto_install ~= false and not (opts.bin and opts.bin ~= '') then
+    local root = opts.plugin_dir or REPO_ROOT
+    if not root then
+      wezterm.log_warn(
+        'wezterm-agents: auto_install を有効にできません: プラグインの場所を'
+          .. '判別できませんでした。apply_to_config に plugin_dir = "<リポジトリのルート>"'
+          .. ' を渡すか、auto_install = false にしてください'
+      )
+    elseif not file_exists(root .. '/install.sh') then
+      wezterm.log_warn('wezterm-agents: auto_install を有効にできません: ' .. root .. '/install.sh がありません')
+    else
+      auto_install_root = root
+    end
+  end
 
   if opts.shell_integration ~= false then
     setup_shell_integration(config, opts)
@@ -1013,7 +1126,17 @@ function M.apply_to_config(config, opts)
     -- its comment for why that matters).
     if not restored_once then
       restored_once = true
-      with_status_dir(restore_dismissed)
+      -- The install check goes first so the state directory is resolved
+      -- against the freshly installed binary. It's also deferred to a timer
+      -- for the same reason as with_status_dir.
+      local ok = auto_install_root
+        and pcall(wezterm.time.call_after, 0, function()
+          ensure_binary(window)
+          with_status_dir(restore_dismissed)
+        end)
+      if not ok then
+        with_status_dir(restore_dismissed)
+      end
     end
     local ok, window_id = pcall(function() return window:window_id() end)
     if not ok then

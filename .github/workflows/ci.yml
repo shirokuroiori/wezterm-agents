@@ -34,3 +34,20 @@ jobs:
           sudo apt-get install -y lua5.4
       - name: Syntax-check Lua sources
         run: find plugin -name '*.lua' -print0 | xargs -0 -n1 luac5.4 -p
+
+  install-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint install.sh
+        run: shellcheck install.sh
+      # Installs the latest published release, so this checks the script
+      # against real release assets rather than this commit's build.
+      - name: Install the latest release and run it
+        run: |
+          set -e
+          dest="$RUNNER_TEMP/bin/wezterm-agents"
+          export XDG_DATA_HOME="$RUNNER_TEMP/data"
+          test "$(sh install.sh --dest "$dest")" = installed
+          "$dest" status-dir
+          test "$(sh install.sh --dest "$dest" --managed-only)" = current

@@ -74,9 +74,36 @@ and notifications, and the TUI reads the state files to build its list.
 
 ## 📦 Install
 
-Requires a Rust toolchain (`cargo build`) for now; prebuilt releases are
-planned. If you don't have `cargo`, install it via
-[rustup](https://rustup.rs).
+Two pieces: the WezTerm plugin (below) and the `wezterm-agents` binary. You
+normally only set up the plugin: on startup it downloads the prebuilt
+binary matching its own version from
+[GitHub Releases](https://github.com/shirokuroiori/wezterm-agents/releases)
+(checksum-verified) to `~/.local/bin/wezterm-agents`, and swaps in the
+matching release whenever the plugin itself is updated. Prebuilt binaries
+cover macOS (arm64, x86_64) and Linux (x86_64, aarch64, glibc). On the very
+first launch the download finishes after the first tab has already
+started, so the Claude Code hooks take effect in tabs opened after the
+"installed" toast. Opt out with `auto_install = false`.
+
+To install the binary without the plugin (or before first launch):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/shirokuroiori/wezterm-agents/main/install.sh | sh
+```
+
+To run `wezterm-agents` (the TUI dashboard) from a shell, make sure
+`~/.local/bin` is on your `PATH`; the plugin and the hooks call it by
+absolute path, so they work either way.
+
+`~/.local/bin/wezterm-agents` is the canonical location: the WezTerm plugin
+looks there by default, and `wezterm-agents init` / `install` embed that
+path (not a symlink target) into the hook configuration they generate, so
+replacing the binary there needs no other change. Put the binary elsewhere
+and you'll need `bin = '...'` in `apply_to_config` (which also turns
+`auto_install` off) and a re-run of `install` after every move.
+
+**Building from source.** Requires a Rust toolchain
+([rustup](https://rustup.rs)):
 
 ```sh
 git clone https://github.com/shirokuroiori/wezterm-agents
@@ -85,12 +112,10 @@ cargo build --release
 ln -s "$PWD/target/release/wezterm-agents" ~/.local/bin/wezterm-agents
 ```
 
-`~/.local/bin/wezterm-agents` is the canonical location: the WezTerm plugin
-looks there by default, and `wezterm-agents init` / `install` embed that
-path (not the symlink target) into the hook configuration they generate, so
-re-pointing the symlink at a new build or a downloaded release binary needs
-no other change. Put the binary elsewhere and you'll need `bin = '...'` in
-`apply_to_config` and a re-run of `install` after every move.
+Auto-install never replaces a symlink, or a binary it didn't put there
+itself, so a local build stays in place. To go back to release binaries,
+remove it (`rm ~/.local/bin/wezterm-agents`) and reload the WezTerm config,
+or run `install.sh --force`.
 
 ### WezTerm
 
@@ -110,8 +135,8 @@ agents.apply_to_config(config, {
 ```
 
 See the doc comment at the top of `plugin/init.lua` for the full option list
-(`icons`, `colors`, `bin`, `debug`, `shell_integration`, `plugin_dir`, `lang`,
-`dashboard_key`)
+(`icons`, `colors`, `bin`, `auto_install`, `debug`, `shell_integration`,
+`plugin_dir`, `lang`, `dashboard_key`)
 and the composable-API example. The dashboard's display language defaults to
 English; pass `lang = 'ja'` for Japanese.
 
@@ -127,7 +152,7 @@ are two ways to get that function defined; they can be combined.
 `plugin/shell-integration/` for every shell it spawns. The bundled `.zshenv`
 there restores `ZDOTDIR`, sources your real `~/.zshenv`, then defines the
 function — your rc files are never modified, and there is nothing to run
-after installing the binary. This covers every zsh WezTerm starts (tabs,
+after the binary is installed. This covers every zsh WezTerm starts (tabs,
 splits, `wezterm cli spawn`), but not a zsh you start *inside* a pane, and
 not other shells. Disable with `shell_integration = false` in
 `apply_to_config`; if the plugin cannot work out its own location (a very
