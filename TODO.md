@@ -33,13 +33,20 @@
       `install.sh`（`curl … | sh` でも使える）を追加し、プラグインが起動時に
       `--managed-only` で呼んで `~/.local/bin` へ自動配置・バージョン追従する
       （`auto_install`、既定 on）。シンボリックリンクや自前ビルドは上書き
-      しない。**GUI 実機での初回インストール・更新は未検証**
-- [ ] `wezterm.plugin.require 'https://github.com/...'` の実地動作確認。
-      **未検証**: `file://` は対象が git リポジトリである必要があり失敗した経緯
-      があるが、`https://` 経由の実クローン・`plugin/init.lua` 読み込みは
-      一度も試せていない
-- [ ] `dofile()` から `wezterm.plugin.require` への切り替え判断（開発が
-      落ち着いたタイミングで）。切り替えたら dotfiles 側 `wezterm.lua` も追従
+      しない。2026-09-24 に `plugin.require` 経由の実機（macOS arm64）で
+      初回インストール（`installed`、SHA256 一致・管理記録あり）と再起動時の
+      `current` 判定を確認済み。**プラグイン更新に追従した `updated` は
+      未検証**（次リリース後にキャッシュを pull して確認する）
+- [x] ~~`wezterm.plugin.require 'https://github.com/...'` の実地動作確認~~ →
+      2026-09-24 に確認済み。`https://` 経由のクローンから `plugin/init.lua`
+      が読み込まれ、`SELF_PATH`（`require` の第2引数経由）でキャッシュの長い
+      パス（`~/Library/Application Support/wezterm/plugins/…`）でも
+      shell-integration・`install.sh` の場所を正しく解決できた。キャッシュは
+      自動更新されないので、更新時は `git -C <キャッシュ> pull` か
+      `wezterm.plugin.update_all()` が要る
+- [x] ~~`dofile()` から `wezterm.plugin.require` への切り替え判断~~ →
+      dotfiles 側 `wezterm.lua` は `plugin.require` に切り替え済み（ローカル
+      の変更を試すときだけ `dofile` に戻す運用）
 
 ## CI・品質
 
